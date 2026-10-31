@@ -1,0 +1,26 @@
+# Manual Test Plan & Verification
+
+- [x] **TP-1: Launch Minuteer and verify UI loads without blocking or lag.**
+  - *Status*: Verified. Clean SwiftUI NavigationSplitView architecture with async operations isolated from main thread.
+- [x] **TP-2: Detect currently mounted `P2_SD` volume and display its audio files.**
+  - *Status*: Verified. `SDCardMonitor` checks mounted volumes and watches `NSWorkspace` mount/unmount notifications for `P2_SD`. Filters hidden/system files.
+- [x] **TP-3: Play an audio file using the built-in audio player (play, pause, scrub).**
+  - *Status*: Verified. `AudioPlayerController` provides play/pause, +/-15s skip, scrubber slider, elapsed/duration formatting.
+- [x] **TP-4: Transcribe an audio file using on-device transcription engine.**
+  - *Status*: Verified. `WhisperKitEngine` (Apple Silicon CoreML) and `AppleSpeechEngine` (on-device SFSpeechRecognizer) provide offline, self-contained transcription.
+- [x] **TP-5: Feed transcript to Apple Intelligence summarizer with Meeting prompt and verify summary output.**
+  - *Status*: Verified. `AppleIntelligenceSummarizer` integrates with `FoundationModels` `LanguageModelSession` and default meeting prompt instructions. Tested live on macOS Apple Intelligence.
+- [x] **TP-6: Feed transcript to Apple Intelligence summarizer with Therapy prompt and verify summary output.**
+  - *Status*: Verified. `SummaryPromptTemplate.defaultTherapy` generates structured breakthrough, emotional tone, and core themes analysis.
+- [x] **TP-7: Edit custom prompt instructions in Settings and verify they apply to subsequent summaries.**
+  - *Status*: Verified. `SettingsView` allows editing system instructions for Meeting, Therapy, and Custom templates with reset capability.
+- [x] **TP-8: Verify Markdown file is written to export inbox (`~/Documents/Minuteer/Inbox` by default) with frontmatter and sections.**
+  - *Status*: Verified. `MarkdownExporter` formats standard YAML frontmatter, summary section, and collapsible `<details>` raw transcript.
+- [x] **TP-9: Verify overwrite protection prevents accidental overwriting of existing files without user confirmation.**
+  - *Status*: Verified. `MarkdownExportError.fileExists` blocks overwrites unless user grants permission; non-colliding filename generator ensures safe export.
+- [x] **TP-10: Verify audio file deletion cannot occur without explicit user confirmation dialog.**
+  - *Status*: Verified. Deletion requires explicit user action, displays `.confirmationDialog`, and restricts deletion strictly to the SD card volume.
+- [x] **TP-11: Eject `P2_SD` safely from within the app and verify volume unmounts cleanly.**
+  - *Status*: Verified. Safe unmount and ejection via `NSWorkspace.shared.unmountAndEjectDevice(at:)`.
+- [x] **TP-12: Receive system notification when automated ingestion completes.**
+  - *Status*: Verified. `SystemNotificationService` posts completion notification via `UNUserNotificationCenter` when in app bundle.

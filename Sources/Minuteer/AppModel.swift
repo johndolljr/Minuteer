@@ -434,10 +434,41 @@ public final class AppModel {
     public var audioDuration: TimeInterval = 0
     public var playbackRate: Float = 1.0
 
+    public var isSDCardConnected: Bool {
+        if case .inserted = sdCardStatus { return true }
+        return false
+    }
+
+    public var menuBarIconName: String {
+        if pipelineStatus.isRunning {
+            return "waveform.badge.mic"
+        }
+        if isSDCardConnected {
+            return "sdcard.fill"
+        }
+        return "waveform"
+    }
+
+    public var menuBarStatusText: String {
+        if pipelineStatus.isRunning {
+            return pipelineStatus.statusDescription
+        }
+        if case .inserted(let url, let free, _) = sdCardStatus {
+            let freeFormatted = ByteCountFormatter.string(fromByteCount: free, countStyle: .file)
+            return "\(url.lastPathComponent) connected (\(freeFormatted) free)"
+        }
+        return "No SD card inserted"
+    }
+
+    public var recentRecordings: [AudioRecordingFile] {
+        Array(recordings.prefix(5))
+    }
+
     public init(
         coordinator: IngestionCoordinator? = nil,
         player: AudioPlayerController = AudioPlayerController(),
-        configStorage: AppConfigStorage = .shared
+        configStorage: AppConfigStorage = .shared,
+        autoStartMonitoring: Bool = true
     ) {
         self.configStorage = configStorage
         let loadedConfig = configStorage.load()
@@ -491,6 +522,10 @@ public final class AppModel {
         self.player = player
 
         setupBindings()
+
+        if autoStartMonitoring {
+            self.start()
+        }
     }
 
     private func setupBindings() {
@@ -541,7 +576,11 @@ public final class AppModel {
         }
     }
 
+    private var isStarted = false
+
     public func start() {
+        guard !isStarted else { return }
+        isStarted = true
         coordinator.startMonitoring()
         sdCardStatus = coordinator.sdCardMonitor.currentStatus
         Task {
@@ -553,6 +592,7 @@ public final class AppModel {
     }
 
     public func stop() {
+        isStarted = false
         coordinator.stopMonitoring()
         player.stop()
     }

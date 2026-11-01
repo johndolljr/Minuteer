@@ -30,16 +30,11 @@ public final class HistoryLedger: @unchecked Sendable {
     private let lock = NSLock()
     private var records: [String: HistoryRecord] = [:]
 
-    public init(fileURL: URL? = nil) {
+    public init(fileURL: URL? = nil, appSupportDirectory: URL? = nil) {
         if let fileURL = fileURL {
             self.fileURL = fileURL
         } else {
-            let appSupport: URL
-            if let first = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-                appSupport = first
-            } else {
-                appSupport = URL(fileURLWithPath: "/tmp")
-            }
+            let appSupport = appSupportDirectory ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/tmp"))
             let appDir = appSupport.appendingPathComponent("Minuteer", isDirectory: true)
             self.fileURL = appDir.appendingPathComponent("history.json")
             if !FileManager.default.fileExists(atPath: self.fileURL.path) {

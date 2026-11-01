@@ -51,17 +51,12 @@ public final class NoteCacheStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let queue = DispatchQueue(label: "com.ragingcoders.NoteCacheStore", qos: .utility)
 
-    public init(cacheDirectory: URL? = nil, fileManager: FileManager = .default) {
+    public init(cacheDirectory: URL? = nil, fileManager: FileManager = .default, appSupportDirectory: URL? = nil) {
         self.fileManager = fileManager
         if let dir = cacheDirectory {
             self.cacheDirectory = dir
         } else {
-            let appSupport: URL
-            if let first = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-                appSupport = first
-            } else {
-                appSupport = URL(fileURLWithPath: NSTemporaryDirectory())
-            }
+            let appSupport = appSupportDirectory ?? (fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory()))
             self.cacheDirectory = appSupport
                 .appendingPathComponent("Minuteer", isDirectory: true)
                 .appendingPathComponent("Cache", isDirectory: true)

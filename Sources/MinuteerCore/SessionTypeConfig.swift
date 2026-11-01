@@ -237,11 +237,11 @@ public final class AppConfigStorage: @unchecked Sendable {
     private let lock = NSLock()
     private var cachedConfig: AppConfig
 
-    public init(configFileURL: URL? = nil) {
+    public init(configFileURL: URL? = nil, appSupportDirectory: URL? = nil) {
         if let file = configFileURL {
             self.configFileURL = file
         } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/tmp")
+            let appSupport = appSupportDirectory ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/tmp"))
             let appDir = appSupport.appendingPathComponent("Minuteer", isDirectory: true)
             self.configFileURL = appDir.appendingPathComponent("config.json")
             if !FileManager.default.fileExists(atPath: self.configFileURL.path) {

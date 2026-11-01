@@ -45,11 +45,11 @@ public final class SpeakerDirectory: @unchecked Sendable {
     private let lock = NSLock()
     private var cachedSpeakers: [SpeakerProfile] = []
 
-    public init(fileURL: URL? = nil) {
+    public init(fileURL: URL? = nil, appSupportDirectory: URL? = nil) {
         if let file = fileURL {
             self.fileURL = file
         } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/tmp")
+            let appSupport = appSupportDirectory ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: "/tmp"))
             let appDir = appSupport.appendingPathComponent("Minuteer", isDirectory: true)
             self.fileURL = appDir.appendingPathComponent("speakers.json")
             if !FileManager.default.fileExists(atPath: self.fileURL.path) {

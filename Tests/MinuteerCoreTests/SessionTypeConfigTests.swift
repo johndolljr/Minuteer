@@ -125,6 +125,34 @@ struct SessionTypeConfigTests {
         #expect(reloaded.exportDirectoryPath == "/tmp/new_export")
     }
 
+    @Test("Legacy InjestAudio directory migration across all stores")
+    func testLegacyDirectoryMigration() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let legacyDir = tempRoot.appendingPathComponent("InjestAudio")
+        let legacyNotes = legacyDir.appendingPathComponent("Cache/Notes", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyNotes, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let initialConfig = AppConfig(targetVolumeName: "MIGRATED_CARD")
+        let encodedConfig = try JSONEncoder().encode(initialConfig)
+        try encodedConfig.write(to: legacyDir.appendingPathComponent("config.json"))
+        try "{}".data(using: .utf8)!.write(to: legacyDir.appendingPathComponent("history.json"))
+        try "[]".data(using: .utf8)!.write(to: legacyDir.appendingPathComponent("speakers.json"))
+        try "sample note".data(using: .utf8)!.write(to: legacyNotes.appendingPathComponent("note.md"))
+
+        let configStorage = AppConfigStorage(configFileURL: nil, appSupportDirectory: tempRoot)
+        #expect(configStorage.load().targetVolumeName == "MIGRATED_CARD")
+
+        let history = HistoryLedger(fileURL: nil, appSupportDirectory: tempRoot)
+        #expect(history.allRecords.isEmpty)
+
+        let speakers = SpeakerDirectory(fileURL: nil, appSupportDirectory: tempRoot)
+        #expect(speakers.allSpeakers.isEmpty)
+
+        let cache = NoteCacheStore(cacheDirectory: nil, appSupportDirectory: tempRoot)
+        #expect(FileManager.default.fileExists(atPath: cache.cacheDirectory.appendingPathComponent("note.md").path))
+    }
+
     @Test("Dynamic target volume name and destination directory mutability")
     func testDynamicMonitorAndExporterProperties() {
         let monitor = SDCardMonitor(targetVolumeName: "INITIAL_CARD")

@@ -276,41 +276,96 @@ public struct AudioFingerprintEngine: Sendable {
         return nil
     }
 
-    /// Automatically identify speakers in a transcript given the recording's audio file
+    /// Automatically identify speakers in a transcript given the recording's audio file.
+    /// 1. Turns matching a known speaker in the SpeakerDirectory with high confidence are labeled with that speaker's name.
+    /// 2. Unregistered or low-confidence turns are clustered acoustically into unique generic speakers
+    ///    ("Speaker 1", "Speaker 2", "Speaker 3", etc.) so distinct voices are cleanly separated within the recording.
     public static func identifySpeakers(
         in audioURL: URL,
         turns: [TranscriptTurn],
         directory: SpeakerDirectory,
         threshold: Float = defaultMatchThreshold
     ) async -> [TranscriptTurn] {
-        guard FileManager.default.fileExists(atPath: audioURL.path) else { return turns }
-        let speakersWithVoiceprints = directory.allSpeakers.filter { $0.voiceprint != nil }
-        guard !speakersWithVoiceprints.isEmpty else { return turns }
-
-        // Find all detected generic speaker labels, e.g. "Speaker 1", "Speaker 2"
-        let uniqueSpeakers = Array(Set(turns.map { $0.speaker })).filter {
-            $0.lowercased().hasPrefix("speaker")
-        }
-        guard !uniqueSpeakers.isEmpty else { return turns }
+        guard FileManager.default.fileExists(atPath: audioURL.path), !turns.isEmpty else { return turns }
 
         var updatedTurns = turns
+        let highConfidenceThreshold = threshold
+        let clusterThreshold: Float = 0.52
 
-        for genericSpeaker in uniqueSpeakers {
-            let speakerTurns = turns.filter { $0.speaker == genericSpeaker }
-            var timeRanges: [(start: TimeInterval, end: TimeInterval)] = []
+        // Anonymous clusters established within this audio recording:
+        // (label: "Speaker 1", centroid: [Float], count: Int)
+        var clusters: [(label: String, centroid: [Float], count: Int)] = []
 
-            for turn in speakerTurns {
-                if let sec = turn.timestampSeconds {
-                    // Turn duration estimated between 2 to 15 seconds
-                    timeRanges.append((start: sec, end: sec + 8.0))
-                }
+        for i in 0..<updatedTurns.count {
+            let currentTurn = updatedTurns[i]
+            let cleanSpeaker = currentTurn.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isGenericSpeaker = cleanSpeaker.isEmpty || cleanSpeaker.lowercased().hasPrefix("speaker")
+
+            let startTime = currentTurn.timestampSeconds ?? (Double(i) * 6.0)
+            let nextStart: TimeInterval? = (i + 1 < updatedTurns.count) ? updatedTurns[i + 1].timestampSeconds : nil
+            let endTime: TimeInterval
+            if let next = nextStart, next > startTime {
+                endTime = min(startTime + 25.0, next)
+            } else {
+                endTime = startTime + 6.0
             }
 
-            guard !timeRanges.isEmpty else { continue }
-            guard let print = try? extractVoiceprint(from: audioURL, timeRanges: timeRanges) else { continue }
+            let duration = max(0.6, endTime - startTime)
+            let timeRanges = [(start: startTime, end: startTime + duration)]
 
-            if let (matched, _) = identifySpeaker(voiceprint: print, in: directory, threshold: threshold) {
-                updatedTurns = TranscriptTurn.renameSpeaker(in: updatedTurns, from: genericSpeaker, to: matched.name)
+            guard let voiceprint = try? extractVoiceprint(from: audioURL, timeRanges: timeRanges) else {
+                // If audio could not be extracted for this turn (e.g., short affirmative turn or pause):
+                // Keep consistent with previous turn if generic
+                if i > 0 && isGenericSpeaker {
+                    updatedTurns[i].speaker = updatedTurns[i - 1].speaker
+                }
+                continue
+            }
+
+            // If turn already has an explicit named non-generic speaker, retain it
+            if !isGenericSpeaker {
+                continue
+            }
+
+            // Step 1: Check known speakers in directory with high confidence
+            if let (matched, _) = identifySpeaker(voiceprint: voiceprint, in: directory, threshold: highConfidenceThreshold) {
+                updatedTurns[i].speaker = matched.name
+                continue
+            }
+
+            // Step 2: Unsupervised acoustic clustering into unique generic speakers (Speaker 1, 2, 3...)
+            if clusters.isEmpty {
+                let firstLabel = "Speaker 1"
+                clusters.append((label: firstLabel, centroid: voiceprint, count: 1))
+                updatedTurns[i].speaker = firstLabel
+            } else {
+                var bestClusterIndex: Int?
+                var bestSimilarity: Float = -1.0
+
+                for (cIdx, cluster) in clusters.enumerated() {
+                    let sim = similarity(voiceprint, cluster.centroid)
+                    if sim > bestSimilarity {
+                        bestSimilarity = sim
+                        bestClusterIndex = cIdx
+                    }
+                }
+
+                if let bestIdx = bestClusterIndex, bestSimilarity >= clusterThreshold {
+                    let matchedCluster = clusters[bestIdx]
+                    updatedTurns[i].speaker = matchedCluster.label
+
+                    let (updatedCentroid, newCount) = updateVoiceprint(
+                        existing: matchedCluster.centroid,
+                        sampleCount: matchedCluster.count,
+                        newPrint: voiceprint
+                    )
+                    clusters[bestIdx].centroid = updatedCentroid
+                    clusters[bestIdx].count = newCount
+                } else {
+                    let newLabel = "Speaker \(clusters.count + 1)"
+                    clusters.append((label: newLabel, centroid: voiceprint, count: 1))
+                    updatedTurns[i].speaker = newLabel
+                }
             }
         }
 

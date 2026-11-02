@@ -240,4 +240,95 @@ struct AudioFingerprintEngineTests {
         #expect(decoded[0].voiceprint == nil)
         #expect(decoded[0].sampleCount == 0)
     }
+
+    @Test("Unsupervised acoustic clustering and speaker diarization across anonymous turns")
+    func testAcousticClusteringAnonymousTurns() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let tempWAV = tempDir.appendingPathComponent("multi_tone.wav")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create a 6-second audio file:
+        // 0.0 - 2.0s: 300Hz tone (Speaker 1)
+        // 2.0 - 4.0s: 2500Hz tone (Speaker 2)
+        // 4.0 - 6.0s: 300Hz tone (Speaker 1 again)
+        var pcmSamples: [Int16] = []
+        let sampleRate = 16000
+        for i in 0..<(sampleRate * 2) {
+            let t = Double(i) / Double(sampleRate)
+            pcmSamples.append(Int16(sin(2.0 * .pi * 300.0 * t) * 16000.0))
+        }
+        for i in 0..<(sampleRate * 2) {
+            let t = Double(i) / Double(sampleRate)
+            pcmSamples.append(Int16(sin(2.0 * .pi * 2500.0 * t) * 16000.0))
+        }
+        for i in 0..<(sampleRate * 2) {
+            let t = Double(i) / Double(sampleRate)
+            pcmSamples.append(Int16(sin(2.0 * .pi * 300.0 * t) * 16000.0))
+        }
+
+        var wavData = Data()
+        let subchunk2Size = pcmSamples.count * 2
+        let chunkSize = 36 + subchunk2Size
+        wavData.append(contentsOf: [0x52, 0x49, 0x46, 0x46])
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt32(chunkSize).littleEndian) { Array($0) })
+        wavData.append(contentsOf: [0x57, 0x41, 0x56, 0x45])
+        wavData.append(contentsOf: [0x66, 0x6D, 0x74, 0x20])
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt32(16).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt16(1).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt32(sampleRate * 2).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt16(2).littleEndian) { Array($0) })
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt16(16).littleEndian) { Array($0) })
+        wavData.append(contentsOf: [0x64, 0x61, 0x74, 0x61])
+        wavData.append(contentsOf: withUnsafeBytes(of: UInt32(subchunk2Size).littleEndian) { Array($0) })
+        for s in pcmSamples {
+            wavData.append(contentsOf: withUnsafeBytes(of: s.littleEndian) { Array($0) })
+        }
+        try wavData.write(to: tempWAV)
+
+        let directory = SpeakerDirectory(fileURL: tempDir.appendingPathComponent("speakers.json"))
+
+        let turns = [
+            TranscriptTurn(id: 0, speaker: "Speaker 1", timestamp: "00:00", text: "Speaker 1 opening."),
+            TranscriptTurn(id: 1, speaker: "Speaker 2", timestamp: "00:02", text: "Speaker 2 reply."),
+            TranscriptTurn(id: 2, speaker: "Speaker 1", timestamp: "00:04", text: "Speaker 1 closing."),
+            TranscriptTurn(id: 3, speaker: "Dave", timestamp: "00:05", text: "Explicit named speaker.")
+        ]
+
+        let clusteredTurns = await AudioFingerprintEngine.identifySpeakers(
+            in: tempWAV,
+            turns: turns,
+            directory: directory,
+            threshold: 0.90
+        )
+
+        #expect(clusteredTurns.count == 4)
+        #expect(clusteredTurns[0].speaker == "Speaker 1")
+        #expect(clusteredTurns[1].speaker == "Speaker 2")
+        #expect(clusteredTurns[2].speaker == "Speaker 1")
+        #expect(clusteredTurns[3].speaker == "Dave")
+
+        // Auto-enroll new speaker in directory when assigned
+        directory.updateVoiceprint(forSpeakerNamed: "Dave", newVoiceprint: [Float](repeating: 0.1, count: AudioFingerprintEngine.featureDimension))
+        #expect(directory.getSpeaker(named: "Dave") != nil)
+        directory.updateVoiceprint(forSpeakerNamed: "Speaker 1", newVoiceprint: [Float](repeating: 0.1, count: AudioFingerprintEngine.featureDimension))
+        #expect(directory.getSpeaker(named: "Speaker 1") == nil)
+
+        // Test nil / missing file and empty turns
+        let empty = await AudioFingerprintEngine.identifySpeakers(
+            in: tempWAV,
+            turns: [],
+            directory: directory
+        )
+        #expect(empty.isEmpty)
+
+        let missing = await AudioFingerprintEngine.identifySpeakers(
+            in: URL(fileURLWithPath: "/missing.wav"),
+            turns: turns,
+            directory: directory
+        )
+        #expect(missing == turns)
+    }
 }

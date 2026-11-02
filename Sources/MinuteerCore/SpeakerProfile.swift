@@ -106,18 +106,30 @@ public final class SpeakerDirectory: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard let idx = cachedSpeakers.firstIndex(where: {
-            $0.name.lowercased() == clean || $0.aliases.contains(where: { $0.lowercased() == clean })
-        }) else { return }
+        guard !clean.isEmpty, !clean.hasPrefix("speaker") else { return }
 
-        let current = cachedSpeakers[idx]
-        let (updatedPrint, newCount) = AudioFingerprintEngine.updateVoiceprint(
-            existing: current.voiceprint,
-            sampleCount: current.sampleCount,
-            newPrint: newVoiceprint
-        )
-        cachedSpeakers[idx].voiceprint = updatedPrint
-        cachedSpeakers[idx].sampleCount = newCount
+        if let idx = cachedSpeakers.firstIndex(where: {
+            $0.name.lowercased() == clean || $0.aliases.contains(where: { $0.lowercased() == clean })
+        }) {
+            let current = cachedSpeakers[idx]
+            let (updatedPrint, newCount) = AudioFingerprintEngine.updateVoiceprint(
+                existing: current.voiceprint,
+                sampleCount: current.sampleCount,
+                newPrint: newVoiceprint
+            )
+            cachedSpeakers[idx].voiceprint = updatedPrint
+            cachedSpeakers[idx].sampleCount = newCount
+        } else {
+            let newProfile = SpeakerProfile(
+                id: UUID(),
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                aliases: [],
+                contextNotes: "Auto-enrolled from voiceprint",
+                voiceprint: AudioFingerprintEngine.normalize(newVoiceprint),
+                sampleCount: 1
+            )
+            cachedSpeakers.append(newProfile)
+        }
         saveUnlocked()
     }
 

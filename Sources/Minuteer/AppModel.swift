@@ -1026,7 +1026,8 @@ public final class AppModel {
             let identifiedTurns = await AudioFingerprintEngine.identifySpeakers(
                 in: fileURL,
                 turns: turns,
-                directory: spkDir
+                directory: spkDir,
+                forceReidentify: true
             )
             await MainActor.run { [weak self] in
                 guard let self = self else { return }

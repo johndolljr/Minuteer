@@ -121,6 +121,22 @@ struct SDCardScannerTests {
         monitor.onStatusChanged = { status in
             box.status = status
         }
+        #expect(monitor.onStatusChanged != nil)
+
+        final class CounterBox: @unchecked Sendable {
+            var count = 0
+        }
+        let counter = CounterBox()
+        monitor.addObserver { _ in
+            counter.count += 1
+        }
+        monitor.updateStatus(.inserted(volumeURL: URL(fileURLWithPath: "/Volumes/P2_SD"), freeBytes: 1000, totalBytes: 2000))
+        #expect(counter.count == 1)
+        #expect(box.status != nil)
+
+        // Duplicate update is ignored
+        monitor.updateStatus(.inserted(volumeURL: URL(fileURLWithPath: "/Volumes/P2_SD"), freeBytes: 1000, totalBytes: 2000))
+        #expect(counter.count == 1)
 
         // Test missing volume branch
         let missingMonitor = SDCardMonitor(targetVolumeName: "NONEXISTENT_VOLUME_XYZ")

@@ -9,6 +9,7 @@ struct SpeakerMappingSheet: View {
     @State private var mappings: [String: String] = [:]
     @State private var newSpeakerNames: [String: String] = [:]
     @State private var showNewSpeakerField: [String: Bool] = [:]
+    @State private var isAutoDetecting: Bool = false
 
     private var parsedTurns: [TranscriptTurn] {
         TranscriptTurn.parseTurns(from: model.activeTranscript(for: file))
@@ -50,6 +51,22 @@ struct SpeakerMappingSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+
+                Button {
+                    autoDetectAcousticSpeakers()
+                } label: {
+                    if isAutoDetecting {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Detecting...")
+                    } else {
+                        Label("Auto-Detect Acoustically", systemImage: "sparkles")
+                    }
+                }
+                .controlSize(.small)
+                .disabled(isAutoDetecting)
+                .help("Analyze pitch and acoustic fingerprints to automatically separate distinct speakers")
+
                 Button {
                     dismiss()
                 } label: {
@@ -134,13 +151,32 @@ struct SpeakerMappingSheet: View {
             let identified = await AudioFingerprintEngine.identifySpeakers(
                 in: file.url,
                 turns: parsedTurns,
-                directory: model.coordinator.speakerDirectory
+                directory: model.coordinator.speakerDirectory,
+                forceReidentify: true
             )
             for speaker in detectedSpeakers {
                 if let turn = identified.first(where: { $0.id == parsedTurns.first(where: { $0.speaker == speaker })?.id }),
                    turn.speaker != speaker {
                     mappings[speaker] = turn.speaker
                 }
+            }
+        }
+    }
+
+    private func autoDetectAcousticSpeakers() {
+        isAutoDetecting = true
+        Task {
+            let turns = parsedTurns
+            let identified = await AudioFingerprintEngine.identifySpeakers(
+                in: file.url,
+                turns: turns,
+                directory: model.coordinator.speakerDirectory,
+                forceReidentify: true
+            )
+            await MainActor.run {
+                model.saveTurns(for: file, turns: identified)
+                initializeMappings()
+                isAutoDetecting = false
             }
         }
     }

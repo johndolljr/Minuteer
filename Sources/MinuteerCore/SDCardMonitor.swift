@@ -25,6 +25,7 @@ public final class SDCardMonitor: @unchecked Sendable {
 
     private var mountObserver: NSObjectProtocol?
     private var unmountObserver: NSObjectProtocol?
+    private var _primaryObserver: (@Sendable (SDCardStatus) -> Void)?
     private var observers: [@Sendable (SDCardStatus) -> Void] = []
 
     public func addObserver(_ observer: @escaping @Sendable (SDCardStatus) -> Void) {
@@ -34,11 +35,15 @@ public final class SDCardMonitor: @unchecked Sendable {
     }
 
     public var onStatusChanged: (@Sendable (SDCardStatus) -> Void)? {
-        get { nil }
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return _primaryObserver
+        }
         set {
-            if let newValue = newValue {
-                addObserver(newValue)
-            }
+            lock.lock()
+            defer { lock.unlock() }
+            _primaryObserver = newValue
         }
     }
 
@@ -175,10 +180,16 @@ public final class SDCardMonitor: @unchecked Sendable {
 
     func updateStatus(_ newStatus: SDCardStatus) {
         lock.lock()
+        if currentStatus == newStatus {
+            lock.unlock()
+            return
+        }
         currentStatus = newStatus
         let currentObservers = observers
+        let primary = _primaryObserver
         lock.unlock()
 
+        primary?(newStatus)
         for observer in currentObservers {
             observer(newStatus)
         }

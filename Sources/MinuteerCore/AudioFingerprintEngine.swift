@@ -343,7 +343,8 @@ public struct AudioFingerprintEngine: Sendable {
         in audioURL: URL,
         turns: [TranscriptTurn],
         directory: SpeakerDirectory,
-        threshold: Float = defaultMatchThreshold
+        threshold: Float = defaultMatchThreshold,
+        forceReidentify: Bool = false
     ) async -> [TranscriptTurn] {
         guard FileManager.default.fileExists(atPath: audioURL.path), !turns.isEmpty else { return turns }
 
@@ -374,15 +375,15 @@ public struct AudioFingerprintEngine: Sendable {
 
             guard let voiceprint = try? extractVoiceprint(from: audioURL, timeRanges: timeRanges) else {
                 // If audio could not be extracted for this turn (e.g., short affirmative turn or pause):
-                // Keep consistent with previous turn if generic
-                if i > 0 && isGenericSpeaker {
+                // Keep consistent with previous turn if generic or forcing re-identification
+                if i > 0 && (isGenericSpeaker || forceReidentify) {
                     updatedTurns[i].speaker = updatedTurns[i - 1].speaker
                 }
                 continue
             }
 
-            // If turn already has an explicit named non-generic speaker, retain it
-            if !isGenericSpeaker {
+            // If turn already has an explicit named non-generic speaker, retain it unless forcing re-identification
+            if !isGenericSpeaker && !forceReidentify {
                 continue
             }
 

@@ -310,6 +310,20 @@ struct AudioFingerprintEngineTests {
         #expect(clusteredTurns[2].speaker == "Speaker 1")
         #expect(clusteredTurns[3].speaker == "Dave")
 
+        // Test forceReidentify: true re-evaluates turns even if already named
+        let forcedTurns = await AudioFingerprintEngine.identifySpeakers(
+            in: tempWAV,
+            turns: turns,
+            directory: directory,
+            threshold: 0.90,
+            forceReidentify: true
+        )
+        #expect(forcedTurns.count == 4)
+        #expect(forcedTurns[0].speaker == "Speaker 1")
+        #expect(forcedTurns[1].speaker == "Speaker 2")
+        #expect(forcedTurns[2].speaker == "Speaker 1")
+        #expect(forcedTurns[3].speaker == "Speaker 1") // Tone at 00:05 matches 300Hz (Speaker 1)
+
         // Auto-enroll new speaker in directory when assigned
         directory.updateVoiceprint(forSpeakerNamed: "Dave", newVoiceprint: [Float](repeating: 0.1, count: AudioFingerprintEngine.featureDimension))
         #expect(directory.getSpeaker(named: "Dave") != nil)

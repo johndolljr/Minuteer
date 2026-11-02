@@ -350,7 +350,10 @@ public final class SystemCalendarService: CalendarService, @unchecked Sendable {
         }
         let predicate = eventStore.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: nil)
         let ekEvents = eventStoreRunner?(predicate) ?? eventStore.events(matching: predicate)
-        let converted = ekEvents.map { convertEvent($0) }
+        let converted = ekEvents.compactMap { ekEvent -> CalendarEventInfo? in
+            guard !ekEvent.isAllDay else { return nil }
+            return convertEvent(ekEvent)
+        }
         return converted.sorted { $0.startDate < $1.startDate }
         #else
         return []

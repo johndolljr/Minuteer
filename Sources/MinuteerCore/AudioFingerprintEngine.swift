@@ -7,7 +7,7 @@ import Accelerate
 /// without storing any audio recordings or slices on disk.
 public struct AudioFingerprintEngine: Sendable {
     public static let featureDimension = 48
-    public static let defaultMatchThreshold: Float = 0.58
+    public static let defaultMatchThreshold: Float = 0.65
 
     public init() {}
 
@@ -182,29 +182,88 @@ public struct AudioFingerprintEngine: Sendable {
         guard speechFramesCount >= 3 else { return nil }
 
         let invCount = 1.0 / Float(speechFramesCount)
+
+        // 1. Mean-subtract 32 log band energies to remove microphone and channel bias
+        var sumBands: Float = 0
+        vDSP_sve(bandAccumulator, 1, &sumBands, vDSP_Length(numBands))
+        let meanBand = (sumBands * invCount) / Float(numBands)
+
+        var normBands = [Float](repeating: 0, count: numBands)
+        for b in 0..<numBands {
+            normBands[b] = (bandAccumulator[b] * invCount) - meanBand
+        }
+
         var featureVector = [Float](repeating: 0, count: featureDimension)
 
-        // First 32 features: Normalized spectral band energies
-        for b in 0..<numBands {
-            featureVector[b] = bandAccumulator[b] * invCount
+        // Features 0..<18: MFCC coefficients (DCT-II from 1 to 18)
+        let pi = Float.pi
+        for n in 1...18 {
+            var sum: Float = 0
+            for k in 0..<numBands {
+                sum += normBands[k] * cos((pi * Float(n) * (Float(k) + 0.5)) / Float(numBands))
+            }
+            featureVector[n - 1] = sum
         }
 
-        // Spectral shape metrics
-        featureVector[32] = centroidSum * invCount
-        featureVector[33] = rolloffSum * invCount
-        featureVector[34] = energySum * invCount
+        // Features 18..<24: Autocorrelation Pitch (F0) & Periodicity
+        let minLag = max(20, min(1000, Int(sampleRate / 400.0)))
+        let maxLag = max(minLag + 10, min(2000, Int(sampleRate / 70.0)))
+        let testCount = min(4000, samples.count - maxLag)
 
-        // Standard deviations and contrasts across frequency bins
-        var meanBand: Float = 0
-        vDSP_meanv(featureVector, 1, &meanBand, vDSP_Length(numBands))
-        for b in 0..<12 {
-            let diff = featureVector[b * 2] - meanBand
-            featureVector[35 + b] = diff
+        var bestLag = minLag
+        var maxAutoCorr: Float = -1.0
+        var zeroLagEnergy: Float = 0
+
+        if testCount > 200 {
+            samples.withUnsafeBufferPointer { sPtr in
+                guard let base = sPtr.baseAddress else { return }
+                vDSP_dotpr(base, 1, base, 1, &zeroLagEnergy, vDSP_Length(testCount))
+                if zeroLagEnergy > 1e-4 {
+                    for lag in stride(from: minLag, to: maxLag, by: 2) {
+                        var ac: Float = 0
+                        vDSP_dotpr(base, 1, base.advanced(by: lag), 1, &ac, vDSP_Length(testCount))
+                        if ac > maxAutoCorr {
+                            maxAutoCorr = ac
+                            bestLag = lag
+                        }
+                    }
+                }
+            }
         }
 
-        featureVector[47] = Float(speechFramesCount) / Float(frameCount)
+        let f0 = (bestLag > 0) ? (sampleRate / Float(bestLag)) : 160.0
+        let normPitch = (f0 - 160.0) / 100.0
+        let pitchStrength = (zeroLagEnergy > 1e-4) ? max(0, min(1.0, maxAutoCorr / zeroLagEnergy)) : 0.0
 
-        return normalize(featureVector)
+        featureVector[18] = normPitch
+        featureVector[19] = pitchStrength
+        featureVector[20] = centroidSum * invCount
+        featureVector[21] = rolloffSum * invCount
+        featureVector[22] = energySum * invCount * 0.1
+        featureVector[23] = Float(speechFramesCount) / Float(frameCount)
+
+        // Features 24..<36: Formant and Spectral Subband Contrasts
+        for i in 0..<12 {
+            let lowIdx = i
+            let highIdx = (i + 16) % numBands
+            featureVector[24 + i] = normBands[lowIdx] - normBands[highIdx]
+        }
+
+        // Features 36..<48: Formant Curvature and Odd-Even Resonance Contrasts
+        for i in 0..<12 {
+            let oddIdx = (i * 2 + 1) % numBands
+            let evenIdx = (i * 2) % numBands
+            featureVector[36 + i] = normBands[oddIdx] - normBands[evenIdx]
+        }
+
+        // Zero-mean center the 48-dim feature vector so the baseline offset across features is 0
+        var vMean: Float = 0
+        vDSP_meanv(featureVector, 1, &vMean, vDSP_Length(featureDimension))
+        var centeredVector = [Float](repeating: 0, count: featureDimension)
+        var negVMean = -vMean
+        vDSP_vsadd(featureVector, 1, &negVMean, &centeredVector, 1, vDSP_Length(featureDimension))
+
+        return normalize(centeredVector)
     }
 
     /// L2 normalize a feature vector

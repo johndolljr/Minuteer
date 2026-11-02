@@ -9,6 +9,18 @@ public final class AudioCaptureDeviceManager: @unchecked Sendable {
 
     public init() {}
 
+    public static func availableMicrophones() -> [AudioSourceDescriptor] {
+        shared.availableMicrophones()
+    }
+
+    public static func availableApplications() async -> [AudioSourceDescriptor] {
+        await shared.availableApplications()
+    }
+
+    public static func systemAudio() -> AudioSourceDescriptor {
+        AudioSourceDescriptor.systemAudio
+    }
+
     /// Discovers all currently available physical and virtual input microphones.
     public func availableMicrophones() -> [AudioSourceDescriptor] {
         let discovery = AVCaptureDevice.DiscoverySession(

@@ -307,6 +307,22 @@ public final class AudioMixerEngine: ObservableObject, @unchecked Sendable {
         case recording(duration: TimeInterval)
         case paused(duration: TimeInterval)
         case mixing
+
+        public var title: String {
+            switch self {
+            case .idle: return "Idle"
+            case .recording: return "Recording"
+            case .paused: return "Paused"
+            case .mixing: return "Mixing"
+            }
+        }
+
+        public var isRecording: Bool {
+            switch self {
+            case .recording, .paused: return true
+            default: return false
+            }
+        }
     }
 
     @Published public private(set) var state: State = .idle
@@ -376,9 +392,21 @@ public final class AudioMixerEngine: ObservableObject, @unchecked Sendable {
         }
     }
 
+    public func setMuted(for channelID: UUID, isMuted: Bool) {
+        if let ch = channels.first(where: { $0.id == channelID }) {
+            ch.isMuted = isMuted
+        }
+    }
+
     public func toggleSolo(for channelID: UUID) {
         if let ch = channels.first(where: { $0.id == channelID }) {
             ch.isSolo.toggle()
+        }
+    }
+
+    public func setSoloed(for channelID: UUID, isSoloed: Bool) {
+        if let ch = channels.first(where: { $0.id == channelID }) {
+            ch.isSolo = isSoloed
         }
     }
 
@@ -417,6 +445,42 @@ public final class AudioMixerEngine: ObservableObject, @unchecked Sendable {
         self.state = .recording(duration: 0)
 
         startMeterTimer()
+    }
+
+    public func setMasterVolume(_ volume: Float) {
+        self.masterVolume = max(0.0, min(1.5, volume))
+    }
+
+    public func linkCalendarEvent(_ event: CalendarEventInfo?) {
+        self.linkedCalendarEvent = event
+    }
+
+    public func unlinkCalendarEvent() {
+        self.linkedCalendarEvent = nil
+    }
+
+    public func pauseRecording() {
+        pause()
+    }
+
+    public func resumeRecording() {
+        resume()
+    }
+
+    public func cancelRecording() {
+        stopMeterTimer()
+        for capturer in capturers.values {
+            Task { await capturer.stop() }
+        }
+        if let sessionDir = sessionDirectory {
+            try? FileManager.default.removeItem(at: sessionDir)
+        }
+        sessionDirectory = nil
+        capturers.removeAll()
+        state = .idle
+        for ch in channels {
+            ch.currentLevel = 0
+        }
     }
 
     public func pause() {

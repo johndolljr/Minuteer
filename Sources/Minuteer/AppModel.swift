@@ -410,6 +410,34 @@ public final class AppModel {
         return (try? await coordinator.calendarService.searchEvents(query: query, start: start, end: end)) ?? []
     }
 
+    public func loadCalendarEventsForLiveMeeting(date: Date = Date()) {
+        isLoadingCalendarEvents = true
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let events = try await self.coordinator.calendarService.fetchEvents(around: date, duration: 1800.0)
+                await MainActor.run {
+                    self.candidateCalendarEvents = events
+                    self.isLoadingCalendarEvents = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingCalendarEvents = false
+                }
+            }
+        }
+    }
+
+    public func openMeetingRecorder() {
+        if mixerEngine.channels.isEmpty {
+            if let defaultMic = AudioCaptureDeviceManager.availableMicrophones().first {
+                mixerEngine.addChannel(for: defaultMic)
+            }
+            mixerEngine.addChannel(for: AudioCaptureDeviceManager.systemAudio())
+        }
+        showMeetingRecorder = true
+    }
+
     public func updateNoteTitle(in file: AudioRecordingFile, newTitle: String) {
         do {
             let updated = try coordinator.updateNoteTitle(for: file, newTitle: newTitle)
@@ -427,6 +455,8 @@ public final class AppModel {
     public var showEjectAlert: Bool = false
     public var alertErrorMessage: String?
     public var showAlertError: Bool = false
+    public var showMeetingRecorder: Bool = false
+    public var mixerEngine: AudioMixerEngine = AudioMixerEngine()
 
     // Playback state mirrors
     public var isAudioPlaying: Bool = false

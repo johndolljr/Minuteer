@@ -126,6 +126,30 @@ struct SidebarView: View {
                     .controlSize(.mini)
                     .labelsHidden()
             }
+
+            Divider()
+                .padding(.vertical, 2)
+
+            Button {
+                model.openMeetingRecorder()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "record.circle.fill")
+                        .foregroundStyle(.red)
+                    Text("Record Meeting…")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Record a live meeting with multi-channel audio mixer")
         }
         .padding(10)
         .background(Color(NSColor.controlBackgroundColor).opacity(0.7))

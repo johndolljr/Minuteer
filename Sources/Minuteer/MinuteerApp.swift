@@ -105,6 +105,9 @@ struct MainWindowContentView: View {
         } message: {
             Text(model.alertErrorMessage ?? "An unknown error occurred.")
         }
+        .sheet(isPresented: $model.showMeetingRecorder) {
+            MeetingRecorderView(model: model, engine: model.mixerEngine)
+        }
         .onAppear {
             model.start()
         }

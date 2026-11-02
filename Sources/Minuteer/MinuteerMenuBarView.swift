@@ -25,6 +25,12 @@ struct MinuteerMenuBarView: View {
         }
         .keyboardShortcut("o", modifiers: .command)
 
+        Button("Record Meeting…") {
+            model.openMeetingRecorder()
+            openMainWindow()
+        }
+        .keyboardShortcut("r", modifiers: [.command, .shift])
+
         if case .inserted(let volumeURL, _, _) = model.sdCardStatus {
             Button("Scan Audio Files") {
                 Task {

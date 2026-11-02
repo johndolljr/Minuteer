@@ -661,6 +661,81 @@ struct AudioMixerEngineTests {
         engine.pause()
         engine.resume()
     }
+
+    @Test("AudioMixerEngine helper methods, state properties, and AudioCaptureDeviceManager static helpers")
+    func testMixerEngineHelpersAndStateProperties() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let engine = AudioMixerEngine()
+        guard let ch = engine.channels.first else {
+            Issue.record("Expected default channels")
+            return
+        }
+
+        // Test setMasterVolume
+        engine.setMasterVolume(0.75)
+        #expect(abs(engine.masterVolume - 0.75) < 1e-4)
+
+        // Test linkCalendarEvent and unlinkCalendarEvent
+        let event = CalendarEventInfo(
+            id: "evt-123",
+            title: "Sprint Planning",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            calendarTitle: "Work"
+        )
+        engine.linkCalendarEvent(event)
+        #expect(engine.linkedCalendarEvent?.title == "Sprint Planning")
+        engine.unlinkCalendarEvent()
+        #expect(engine.linkedCalendarEvent == nil)
+
+        // Test setSoloed and setMuted
+        engine.setSoloed(for: ch.id, isSoloed: true)
+        #expect(ch.isSolo)
+        engine.setSoloed(for: ch.id, isSoloed: false)
+        #expect(!ch.isSolo)
+
+        engine.setMuted(for: ch.id, isMuted: true)
+        #expect(ch.isMuted)
+        engine.setMuted(for: ch.id, isMuted: false)
+        #expect(!ch.isMuted)
+
+        // Non-existent channel guards
+        let bogusID = UUID()
+        engine.setSoloed(for: bogusID, isSoloed: true)
+        engine.setMuted(for: bogusID, isMuted: true)
+
+        // Test State enum properties
+        #expect(AudioMixerEngine.State.idle.title == "Idle")
+        #expect(AudioMixerEngine.State.recording(duration: 5.0).title == "Recording")
+        #expect(AudioMixerEngine.State.paused(duration: 5.0).title == "Paused")
+        #expect(AudioMixerEngine.State.mixing.title == "Mixing")
+
+        #expect(!AudioMixerEngine.State.idle.isRecording)
+        #expect(AudioMixerEngine.State.recording(duration: 1.0).isRecording)
+        #expect(AudioMixerEngine.State.paused(duration: 1.0).isRecording)
+        #expect(!AudioMixerEngine.State.mixing.isRecording)
+
+        // Test pauseRecording and resumeRecording
+        engine.pauseRecording()
+        engine.resumeRecording()
+
+        // Test cancelRecording lifecycle
+        engine.cancelRecording()
+        #expect(engine.state == .idle)
+
+        // Test AudioCaptureDeviceManager static helpers
+        let mics = AudioCaptureDeviceManager.availableMicrophones()
+        #expect(mics.count >= 0)
+
+        let apps = await AudioCaptureDeviceManager.availableApplications()
+        #expect(apps.count >= 0)
+
+        let sys = AudioCaptureDeviceManager.systemAudio()
+        #expect(sys.kind == .systemAudio)
+    }
 }
 
 final class MockStemCapturer: AudioStemCapturer, @unchecked Sendable {

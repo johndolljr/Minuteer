@@ -155,6 +155,48 @@ struct AudioFileCopyAndWatchTests {
         #expect(throws: AudioFileCopyError.self) {
             try service.copyAndVerify(sourceURL: missing, destinationDirectory: dest)
         }
+        #expect(AudioFileCopyService.fileSize(at: missing) == -1)
+    }
+
+    @Test("AudioFileCopyService already copied and verified path and directory creation failure")
+    func testAlreadyCopiedAndVerified() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let sourceDir = root.appendingPathComponent("Source")
+        let destDir = root.appendingPathComponent("Dest")
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sourceFile = sourceDir.appendingPathComponent("already_done.wav")
+        let data = Data(repeating: 0x55, count: 512)
+        try data.write(to: sourceFile)
+
+        let service = AudioFileCopyService()
+        // First copy (without source deletion)
+        let first = try service.copyAndVerify(sourceURL: sourceFile, destinationDirectory: destDir, deleteSourceAfterVerification: false)
+        #expect(FileManager.default.fileExists(atPath: first.path))
+
+        // Second copy with identical destination file already existing (exercises already verified path)
+        let second = try service.copyAndVerify(sourceURL: sourceFile, destinationDirectory: destDir, deleteSourceAfterVerification: false)
+        #expect(second.path == first.path)
+
+        // Test destination generation with identical hash
+        let destGenSame = AudioFileCopyService.generateDestinationURL(sourceURL: sourceFile, destinationDirectory: destDir)
+        #expect(destGenSame.path == first.path)
+
+        // Test destination generation for file without extension
+        let noExtSource = sourceDir.appendingPathComponent("no_ext_file")
+        try Data("no ext".utf8).write(to: noExtSource)
+        let noExtDest = destDir.appendingPathComponent("no_ext_file")
+        try Data("existing diff".utf8).write(to: noExtDest)
+        let destGenNoExt = AudioFileCopyService.generateDestinationURL(sourceURL: noExtSource, destinationDirectory: destDir)
+        #expect(destGenNoExt.path != noExtDest.path)
+
+        // Test destination directory creation failure
+        let impossibleDest = URL(fileURLWithPath: "/dev/null/impossible_dir")
+        #expect(throws: AudioFileCopyError.self) {
+            try service.copyAndVerify(sourceURL: sourceFile, destinationDirectory: impossibleDest, deleteSourceAfterVerification: false)
+        }
     }
 
     final class DiscoveredBox: @unchecked Sendable {

@@ -513,4 +513,112 @@ struct IngestionCoordinatorTests {
         let fallbackExport = try await coordinator.processRecording(file)
         #expect(FileManager.default.fileExists(atPath: fallbackExport.path))
     }
+
+    @Test("IngestionCoordinator deduplication and concurrent processing prevention")
+    @MainActor
+    func testDeduplicationAndConcurrentProcessingGuard() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let audioDir = tempDir.appendingPathComponent("Recordings")
+        let exportDir = tempDir.appendingPathComponent("Notes")
+        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let monitor = SDCardMonitor(targetVolumeName: "TEST_VOL")
+        let transcriber = MockTranscriptionEngine(mockTranscript: "Deduplication test transcription")
+        let summarizer = AppleIntelligenceSummarizer { _ in "Deduplication test summary" }
+
+        let coordinator = IngestionCoordinator(
+            sdCardMonitor: monitor,
+            transcriptionEngine: transcriber,
+            summarizerEngine: summarizer,
+            markdownExporter: MarkdownExporter(destinationDirectory: exportDir),
+            historyLedger: HistoryLedger(fileURL: tempDir.appendingPathComponent("history.json")),
+            audioLibraryDirectory: audioDir,
+            autoProcessOnInsert: false
+        )
+
+        let file1 = AudioRecordingFile(
+            id: UUID(),
+            url: audioDir.appendingPathComponent("250105_195443/MIX.WAV"),
+            fileSize: 1024,
+            creationDate: Date()
+        )
+        let file2Duplicate = AudioRecordingFile(
+            id: UUID(),
+            url: tempDir.appendingPathComponent("other_path/250105_195443/MIX.WAV"),
+            fileSize: 1024,
+            creationDate: Date()
+        )
+
+        // Merging duplicates by displayName preserves single entry
+        coordinator.mergeDiscoveredFiles([file1, file2Duplicate])
+        #expect(coordinator.discoveredFiles.count == 1)
+
+        // Updating with a file that has matching displayName updates in-place
+        var updated = file2Duplicate
+        updated.transcriptionProgress = 0.5
+        coordinator.updateDiscoveredFile(updated)
+        #expect(coordinator.discoveredFiles.count == 1)
+        #expect(coordinator.discoveredFiles.first?.transcriptionProgress == 0.5)
+
+        // Test concurrent processRecording guard
+        try FileManager.default.createDirectory(at: file1.url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try makeValidWAVData(durationSeconds: 0.2).write(to: file1.url)
+        async let run1 = coordinator.processRecording(file1)
+        async let run2 = coordinator.processRecording(file1)
+
+        let results = await (try? run1, try? run2)
+        // At least one succeeds and the other either succeeds (reuses output) or raises the concurrency guard
+        #expect(results.0 != nil || results.1 != nil)
+    }
+
+    @Test("IngestionCoordinator cancelProcessing resets in-flight state and clears queue")
+    @MainActor
+    func testCancelProcessing() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let audioDir = tempDir.appendingPathComponent("Recordings")
+        let exportDir = tempDir.appendingPathComponent("Notes")
+        try FileManager.default.createDirectory(at: audioDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let monitor = SDCardMonitor(targetVolumeName: "TEST_VOL")
+        let transcriber = MockTranscriptionEngine(mockTranscript: "Test")
+        let summarizer = AppleIntelligenceSummarizer { _ in "Test Summary" }
+
+        let coordinator = IngestionCoordinator(
+            sdCardMonitor: monitor,
+            transcriptionEngine: transcriber,
+            summarizerEngine: summarizer,
+            markdownExporter: MarkdownExporter(destinationDirectory: exportDir),
+            historyLedger: HistoryLedger(fileURL: tempDir.appendingPathComponent("history.json")),
+            audioLibraryDirectory: audioDir,
+            autoProcessOnInsert: false
+        )
+
+        let file = AudioRecordingFile(
+            id: UUID(),
+            url: audioDir.appendingPathComponent("REC001.WAV"),
+            fileSize: 1024,
+            creationDate: Date(),
+            status: .transcribing,
+            transcriptionProgress: 0.45
+        )
+        let file2 = AudioRecordingFile(
+            id: UUID(),
+            url: audioDir.appendingPathComponent("REC002.WAV"),
+            fileSize: 2048,
+            creationDate: Date(),
+            status: .summarizing,
+            transcriptionProgress: 0.80
+        )
+        coordinator.mergeDiscoveredFiles([file, file2])
+        #expect(coordinator.discoveredFiles.first(where: { $0.id == file.id })?.status == .transcribing)
+        #expect(coordinator.discoveredFiles.first(where: { $0.id == file2.id })?.status == .summarizing)
+
+        coordinator.cancelProcessing()
+        #expect(coordinator.discoveredFiles.allSatisfy { $0.status == .discovered && $0.transcriptionProgress == 0.0 })
+        #expect(coordinator.pipelineStatus == .idle)
+    }
 }

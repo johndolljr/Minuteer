@@ -68,6 +68,8 @@ public final class IngestionCoordinator {
 
     private(set) public var discoveredFiles: [AudioRecordingFile] = []
     private(set) public var pipelineStatus: PipelineStatus = .idle
+    private var isBatchProcessing = false
+    private var activeProcessingDisplayNames: Set<String> = []
 
     public var onDiscoveredFilesChanged: ((@MainActor ([AudioRecordingFile]) -> Void))?
     public var onPipelineStatusChanged: ((@MainActor (PipelineStatus) -> Void))?
@@ -231,7 +233,7 @@ public final class IngestionCoordinator {
 
     public func mergeDiscoveredFiles(_ newFiles: [AudioRecordingFile]) {
         for file in newFiles {
-            if let idx = discoveredFiles.firstIndex(where: { $0.url.path == file.url.path || $0.displayName == file.displayName }) {
+            if let idx = discoveredFiles.firstIndex(where: { $0.displayName == file.displayName || $0.url.path == file.url.path }) {
                 if discoveredFiles[idx].status == .completed || discoveredFiles[idx].status == .transcribing || discoveredFiles[idx].status == .summarizing {
                     if discoveredFiles[idx].noteTitle == nil {
                         discoveredFiles[idx].noteTitle = file.noteTitle
@@ -281,6 +283,19 @@ public final class IngestionCoordinator {
         sessionConfig: SessionTypeConfig? = nil,
         forceRetranscribe: Bool = false
     ) async throws -> URL {
+        let fileDisplayName = file.displayName
+        guard !activeProcessingDisplayNames.contains(fileDisplayName) else {
+            if let existing = file.markdownPath, FileManager.default.fileExists(atPath: existing.path) {
+                return existing
+            }
+            throw NSError(domain: "IngestionCoordinator", code: 409, userInfo: [NSLocalizedDescriptionKey: "\(fileDisplayName) is already being processed."])
+        }
+
+        activeProcessingDisplayNames.insert(fileDisplayName)
+        defer {
+            activeProcessingDisplayNames.remove(fileDisplayName)
+        }
+
         var activeFile = file
         activeFile.errorMessage = nil
 
@@ -297,7 +312,6 @@ public final class IngestionCoordinator {
             throw NSError(domain: "IngestionCoordinator", code: 404, userInfo: [NSLocalizedDescriptionKey: errorMsg])
         }
 
-        let fileDisplayName = activeFile.displayName
         let fileID = activeFile.id
 
         // Copy audio to local machine and delete from source once verified
@@ -557,20 +571,41 @@ public final class IngestionCoordinator {
 
     @discardableResult
     public func processAllUnprocessed() async -> [URL] {
+        guard !isBatchProcessing else { return [] }
+        isBatchProcessing = true
+        defer {
+            isBatchProcessing = false
+            setPipelineStatus(.idle)
+        }
+
         let filesToProcess = discoveredFiles.filter { !historyLedger.isProcessed(file: $0) }
 
         var results: [URL] = []
         for file in filesToProcess {
+            if Task.isCancelled { break }
             do {
                 let url = try await processRecording(file)
                 results.append(url)
             } catch {
+                if Task.isCancelled { break }
                 // Continue to next file if one fails
             }
         }
 
-        setPipelineStatus(.idle)
         return results
+    }
+
+    public func cancelProcessing() {
+        isBatchProcessing = false
+        activeProcessingDisplayNames.removeAll()
+        for idx in discoveredFiles.indices {
+            if discoveredFiles[idx].status == .transcribing || discoveredFiles[idx].status == .summarizing {
+                discoveredFiles[idx].status = .discovered
+                discoveredFiles[idx].transcriptionProgress = 0.0
+            }
+        }
+        onDiscoveredFilesChanged?(discoveredFiles)
+        setPipelineStatus(.idle)
     }
 
     public func deleteRecording(_ file: AudioRecordingFile) throws {
@@ -596,7 +631,7 @@ public final class IngestionCoordinator {
         try? historyLedger.removeRecord(for: file)
 
         // 4. Update discovered files
-        discoveredFiles.removeAll { $0.id == file.id }
+        discoveredFiles.removeAll { $0.displayName == file.displayName || $0.id == file.id }
         onDiscoveredFilesChanged?(discoveredFiles)
     }
 
@@ -774,7 +809,7 @@ public final class IngestionCoordinator {
     }
 
     private func updateFileProgress(id: UUID, progress: Double, displayName: String) {
-        if let idx = discoveredFiles.firstIndex(where: { $0.id == id }) {
+        if let idx = discoveredFiles.firstIndex(where: { $0.displayName == displayName || $0.id == id }) {
             discoveredFiles[idx].transcriptionProgress = progress
             onDiscoveredFilesChanged?(discoveredFiles)
         }
@@ -782,7 +817,7 @@ public final class IngestionCoordinator {
     }
 
     public func updateDiscoveredFile(_ updated: AudioRecordingFile) {
-        if let idx = discoveredFiles.firstIndex(where: { $0.id == updated.id }) {
+        if let idx = discoveredFiles.firstIndex(where: { $0.displayName == updated.displayName || $0.id == updated.id || $0.url.path == updated.url.path }) {
             discoveredFiles[idx] = updated
         } else {
             discoveredFiles.append(updated)

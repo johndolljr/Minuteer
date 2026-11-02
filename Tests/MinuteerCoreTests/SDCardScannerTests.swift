@@ -232,6 +232,20 @@ struct SDCardScannerTests {
         )
         monitor.handleUnmountNotification(unmountOther)
 
+        let unmountEmpty = Notification(name: NSWorkspace.didUnmountNotification)
+        monitor.handleUnmountNotification(unmountEmpty)
+
+        let mountOther = Notification(
+            name: NSWorkspace.didMountNotification,
+            object: nil,
+            userInfo: ["NSDevicePath": "/Volumes/NotTarget"]
+        )
+        monitor.handleMountNotification(mountOther)
+
+        // Test ejectCard when not inserted
+        monitor.updateStatus(.notInserted)
+        try await monitor.ejectCard()
+
         // Test ejectCard with mock handler
         monitor.updateStatus(.inserted(volumeURL: URL(fileURLWithPath: "/Volumes/P2_SD"), freeBytes: 100, totalBytes: 200))
         final class BoolBox: @unchecked Sendable { var value = false }

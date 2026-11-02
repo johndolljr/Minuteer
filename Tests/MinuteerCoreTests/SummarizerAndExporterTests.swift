@@ -20,6 +20,11 @@ struct SummarizerAndExporterTests {
         let customTemplate = SummaryPromptTemplate(sessionType: .custom, systemInstructions: "Provide a 3-bullet executive summary.")
         #expect(customTemplate.systemInstructions == "Provide a 3-bullet executive summary.")
 
+        #expect(SessionType.meeting.title == "Meeting")
+        #expect(SessionType.therapy.title == "Therapy Session")
+        #expect(SessionType.custom.title == "Custom")
+        #expect(SessionType.allCases.count == 3)
+
         let prompt = meetingTemplate.renderPrompt(transcript: "Alice: We agreed to launch next week.")
         #expect(prompt.contains("Alice: We agreed to launch next week."))
         #expect(prompt.contains(meetingTemplate.systemInstructions))
@@ -835,5 +840,17 @@ struct SummarizerAndExporterTests {
         let longTranscript = (1...20).map { "Line \($0): Discussed quarterly objectives." }.joined(separator: "\n")
         let chunkSummary = try await summarizer.summarizeWithChunking(transcript: longTranscript, template: .defaultMeeting, maxChunkSize: 40)
         #expect(!chunkSummary.isEmpty)
+
+        // testConnection and invalid endpoint fetchAvailableModels
+        let conn = try await summarizer.testConnection()
+        #expect(conn.latencyMs >= 1)
+        #expect(conn.model == "mock-model")
+
+        let badSummarizer = OpenAICompatibleSummarizer(endpoint: "bad url endpoint", modelName: "test")
+        do {
+            _ = try await badSummarizer.fetchAvailableModels()
+        } catch {
+            // Expected invalid URL error
+        }
     }
 }

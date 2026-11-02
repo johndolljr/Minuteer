@@ -60,24 +60,56 @@ public final class AppleSpeechEngine: TranscriptionEngine, @unchecked Sendable {
             request.requiresOnDeviceRecognition = true
         }
 
+        final class SpeechSession: @unchecked Sendable {
+            private let lock = NSLock()
+            private var continuation: CheckedContinuation<String, Error>?
+            private var task: SFSpeechRecognitionTask?
+
+            init(continuation: CheckedContinuation<String, Error>) {
+                self.continuation = continuation
+            }
+
+            func attachTask(_ task: SFSpeechRecognitionTask) {
+                lock.lock()
+                defer { lock.unlock() }
+                self.task = task
+            }
+
+            func finish(result: Result<String, Error>) {
+                lock.lock()
+                let cont = continuation
+                continuation = nil
+                let t = task
+                task = nil
+                lock.unlock()
+
+                cont?.resume(with: result)
+                if case .failure = result {
+                    t?.cancel()
+                }
+            }
+        }
+
         return try await withCheckedThrowingContinuation { continuation in
-            var hasFinished = false
-            _ = recognizer.recognitionTask(with: request) { result, error in
+            let session = SpeechSession(continuation: continuation)
+
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let error = error {
-                    if !hasFinished {
-                        hasFinished = true
-                        continuation.resume(throwing: error)
-                    }
+                    session.finish(result: .failure(error))
                     return
                 }
 
                 if let result = result, result.isFinal {
-                    if !hasFinished {
-                        hasFinished = true
-                        progress?(1.0)
-                        continuation.resume(returning: result.bestTranscription.formattedString)
-                    }
+                    progress?(1.0)
+                    session.finish(result: .success(result.bestTranscription.formattedString))
                 }
+            }
+
+            session.attachTask(task)
+
+            Task {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                session.finish(result: .failure(NSError(domain: "AppleSpeechEngine", code: 408, userInfo: [NSLocalizedDescriptionKey: "Speech recognition request timed out or cancelled."])))
             }
         }
     }
@@ -458,6 +490,9 @@ public actor WhisperKitEngine: TranscriptionEngine {
             audioPath: audioFileURL.path,
             decodeOptions: decodeOptions
         ) { transcriptionProgress in
+            if Task.isCancelled {
+                return false
+            }
             let windowProgress = Double(transcriptionProgress.windowId + 1) / Double(estimatedWindows)
             let currentFraction = 0.15 + (windowProgress * 0.80)
             progress?(min(currentFraction, 0.98))

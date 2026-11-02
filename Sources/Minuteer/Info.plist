@@ -23,7 +23,7 @@
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Minuteer transcribes your audio files locally on your Mac.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Minuteer accesses audio files for transcription.</string>
+    <string>Minuteer records meetings, microphone audio, and system sources for local transcription.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Minuteer accesses your calendar to link recordings with meetings and automatically organize your notes.</string>
     <key>NSCalendarsUsageDescription</key>

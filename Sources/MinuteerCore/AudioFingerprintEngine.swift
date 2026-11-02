@@ -350,4 +350,23 @@ public struct AudioFingerprintEngine: Sendable {
             directory.updateVoiceprint(forSpeakerNamed: cleanName, newVoiceprint: newPrint)
         }
     }
+
+    /// Asynchronously extracts and updates a speaker's voiceprint directly from their dedicated microphone or source stem
+    public static func fingerprintSpeakerFromStem(
+        stemURL: URL,
+        speakerName: String,
+        directory: SpeakerDirectory = .shared
+    ) {
+        guard FileManager.default.fileExists(atPath: stemURL.path) else { return }
+        let cleanName = speakerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, !cleanName.lowercased().hasPrefix("speaker") else { return }
+
+        Task.detached(priority: .utility) {
+            let timeRanges: [(start: TimeInterval, end: TimeInterval)] = [
+                (start: 0.0, end: 45.0)
+            ]
+            guard let newPrint = try? extractVoiceprint(from: stemURL, timeRanges: timeRanges) else { return }
+            directory.updateVoiceprint(forSpeakerNamed: cleanName, newVoiceprint: newPrint)
+        }
+    }
 }

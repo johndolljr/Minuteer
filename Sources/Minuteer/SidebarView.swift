@@ -437,6 +437,16 @@ struct SidebarView: View {
                     Text(model.pipelineStatus.statusDescription)
                         .font(.caption2)
                         .lineLimit(1)
+
+                    Button {
+                        model.cancelProcessing()
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop processing")
                 }
             }
 

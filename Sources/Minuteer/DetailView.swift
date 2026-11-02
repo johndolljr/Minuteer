@@ -216,6 +216,13 @@ struct DetailView: View {
                             .fontWeight(.bold)
                             .monospacedDigit()
                             .foregroundStyle(.blue)
+
+                        Button("Stop", systemImage: "stop.fill") {
+                            model.cancelProcessing()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.red)
                     }
                     ProgressView(value: max(file.transcriptionProgress, 0.03))
                         .progressViewStyle(.linear)
@@ -245,6 +252,12 @@ struct DetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    Button("Stop", systemImage: "stop.fill") {
+                        model.cancelProcessing()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
                 }
                 .padding(10)
                 .background(Color.purple.opacity(0.08))

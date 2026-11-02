@@ -531,10 +531,19 @@ public final class AppModel {
     private func setupBindings() {
         coordinator.onDiscoveredFilesChanged = { [weak self] files in
             guard let self = self else { return }
-            self.recordings = files
-            if let currentID = self.selectedRecordingID, files.contains(where: { $0.id == currentID }) {
+            // Deduplicate files by displayName to protect UI against any duplicate entries
+            var seen = Set<String>()
+            var unique: [AudioRecordingFile] = []
+            for file in files {
+                if !seen.contains(file.displayName) {
+                    seen.insert(file.displayName)
+                    unique.append(file)
+                }
+            }
+            self.recordings = unique
+            if let currentID = self.selectedRecordingID, unique.contains(where: { $0.id == currentID }) {
                 // Preserve current selection
-            } else if let first = files.first {
+            } else if let first = unique.first {
                 self.selectedRecordingID = first.id
                 self.loadAudioForSelectedFile()
             }
@@ -555,14 +564,6 @@ public final class AppModel {
 
         coordinator.onSDCardStatusChanged = { [weak self] status in
             self?.sdCardStatus = status
-        }
-
-        coordinator.sdCardMonitor.onStatusChanged = { [weak self] status in
-            Task { @MainActor [weak self] in
-                guard let self = self else { return }
-                self.sdCardStatus = status
-                await self.coordinator.handleSDCardStatusChanged(status)
-            }
         }
 
         player.onPlaybackStateChanged = { [weak self] playing in
@@ -945,16 +946,21 @@ public final class AppModel {
         }
     }
 
+    private var activeProcessingTask: Task<Void, Never>?
+
     public func processFile(_ file: AudioRecordingFile, sessionConfig: SessionTypeConfig? = nil) {
         let coordinator = self.coordinator
         let configToUse = sessionConfig ?? self.sessionConfig(for: file)
-        Task.detached(priority: .userInitiated) {
+        activeProcessingTask?.cancel()
+        activeProcessingTask = Task {
             do {
                 _ = try await coordinator.processRecording(file, sessionConfig: configToUse)
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.alertErrorMessage = error.localizedDescription
-                    self?.showAlertError = true
+                if !Task.isCancelled {
+                    await MainActor.run { [weak self] in
+                        self?.alertErrorMessage = error.localizedDescription
+                        self?.showAlertError = true
+                    }
                 }
             }
         }
@@ -963,13 +969,16 @@ public final class AppModel {
     public func retranscribeFile(_ file: AudioRecordingFile) {
         let coordinator = self.coordinator
         let configToUse = self.sessionConfig(for: file)
-        Task.detached(priority: .userInitiated) {
+        activeProcessingTask?.cancel()
+        activeProcessingTask = Task {
             do {
                 _ = try await coordinator.processRecording(file, sessionConfig: configToUse, forceRetranscribe: true)
             } catch {
-                await MainActor.run { [weak self] in
-                    self?.alertErrorMessage = error.localizedDescription
-                    self?.showAlertError = true
+                if !Task.isCancelled {
+                    await MainActor.run { [weak self] in
+                        self?.alertErrorMessage = error.localizedDescription
+                        self?.showAlertError = true
+                    }
                 }
             }
         }
@@ -998,9 +1007,16 @@ public final class AppModel {
     }
 
     public func processAllUnprocessed() {
-        Task {
+        activeProcessingTask?.cancel()
+        activeProcessingTask = Task {
             _ = await coordinator.processAllUnprocessed()
         }
+    }
+
+    public func cancelProcessing() {
+        activeProcessingTask?.cancel()
+        activeProcessingTask = nil
+        coordinator.cancelProcessing()
     }
 
     public func promptDeleteFile(_ file: AudioRecordingFile) {

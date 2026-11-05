@@ -457,6 +457,17 @@ public final class AppModel {
     public var showAlertError: Bool = false
     public var showMeetingRecorder: Bool = false
     public var mixerEngine: AudioMixerEngine = AudioMixerEngine()
+    public var speakerPropagationToast: String? = nil
+
+    public func showSpeakerToast(_ message: String) {
+        speakerPropagationToast = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if self?.speakerPropagationToast == message {
+                self?.speakerPropagationToast = nil
+            }
+        }
+    }
 
     // Playback state mirrors
     public var isAudioPlaying: Bool = false
@@ -829,29 +840,62 @@ public final class AppModel {
             coordinator.speakerDirectory.addSpeaker(SpeakerProfile(name: cleanNew))
         }
 
-        // Fingerprint speaker's voice in the background to learn and identify in future meetings
-        AudioFingerprintEngine.fingerprintSpeakerInBackground(
-            audioURL: file.url,
-            speakerName: cleanNew,
-            turns: updatedTurns,
-            directory: coordinator.speakerDirectory
-        )
+        // Train speaker's acoustic profile in the background and propagate to any remaining generic turns
+        let spkDir = coordinator.speakerDirectory
+        let fileURL = file.url
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let (propagatedTurns, matchedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                audioURL: fileURL,
+                speakerName: cleanNew,
+                turns: updatedTurns,
+                directory: spkDir
+            )
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                if matchedCount > 0 {
+                    self.saveTurns(for: file, turns: propagatedTurns)
+                    self.showSpeakerToast("Trained \(cleanNew)'s voiceprint & auto-matched \(matchedCount) additional turn\(matchedCount == 1 ? "" : "s")!")
+                } else {
+                    self.showSpeakerToast("Learned & refined voiceprint for \(cleanNew).")
+                }
+            }
+        }
     }
 
     public func updateTurnSpeaker(in file: AudioRecordingFile, turnIndex: Int, newSpeaker: String) {
+        let cleanNew = newSpeaker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanNew.isEmpty else { return }
+
         let currentTranscript = activeTranscript(for: file)
         var turns = TranscriptTurn.parseTurns(from: currentTranscript)
         guard turnIndex >= 0 && turnIndex < turns.count else { return }
-        turns[turnIndex].speaker = newSpeaker
+        turns[turnIndex].speaker = cleanNew
         saveTurns(for: file, turns: turns)
 
-        // Learn voiceprint for new speaker in background
-        AudioFingerprintEngine.fingerprintSpeakerInBackground(
-            audioURL: file.url,
-            speakerName: newSpeaker,
-            turns: turns,
-            directory: coordinator.speakerDirectory
-        )
+        if coordinator.speakerDirectory.getSpeaker(named: cleanNew) == nil {
+            coordinator.speakerDirectory.addSpeaker(SpeakerProfile(name: cleanNew))
+        }
+
+        // Train speaker's acoustic profile from the assigned turn and propagate across generic turns
+        let spkDir = coordinator.speakerDirectory
+        let fileURL = file.url
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let (propagatedTurns, matchedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                audioURL: fileURL,
+                speakerName: cleanNew,
+                turns: turns,
+                directory: spkDir
+            )
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                if matchedCount > 0 {
+                    self.saveTurns(for: file, turns: propagatedTurns)
+                    self.showSpeakerToast("Trained \(cleanNew)'s voiceprint & auto-matched \(matchedCount) additional turn\(matchedCount == 1 ? "" : "s")!")
+                } else {
+                    self.showSpeakerToast("Learned & refined voiceprint for \(cleanNew).")
+                }
+            }
+        }
     }
 
     public func updateTurnText(in file: AudioRecordingFile, turnIndex: Int, newText: String) {

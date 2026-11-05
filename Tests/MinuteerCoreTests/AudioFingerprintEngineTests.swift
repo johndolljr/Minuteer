@@ -344,5 +344,42 @@ struct AudioFingerprintEngineTests {
             directory: directory
         )
         #expect(missing == turns)
+
+        // Test trainAndPropagateSpeaker: assigning one turn trains voiceprint and propagates to remaining turns
+        let propagationTurns = [
+            TranscriptTurn(id: 0, speaker: "Glenn", timestamp: "00:00", text: "Glenn speaking 300Hz."),
+            TranscriptTurn(id: 1, speaker: "Speaker 2", timestamp: "00:02", text: "Unrelated 2500Hz."),
+            TranscriptTurn(id: 2, speaker: "Speaker 1", timestamp: "00:04", text: "Also Glenn 300Hz.")
+        ]
+
+        let (propagated, matchCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+            audioURL: tempWAV,
+            speakerName: "Glenn",
+            turns: propagationTurns,
+            directory: directory,
+            threshold: 0.65
+        )
+
+        #expect(matchCount == 1)
+        #expect(propagated[0].speaker == "Glenn")
+        #expect(propagated[1].speaker == "Speaker 2")
+        #expect(propagated[2].speaker == "Glenn") // Turn 2 auto-matched to Glenn!
+
+        // Test edge cases: missing file, empty turns, generic speaker
+        let propMissing = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+            audioURL: URL(fileURLWithPath: "/missing.wav"),
+            speakerName: "Glenn",
+            turns: propagationTurns,
+            directory: directory
+        )
+        #expect(propMissing.matchedCount == 0)
+
+        let propGeneric = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+            audioURL: tempWAV,
+            speakerName: "Speaker 1",
+            turns: propagationTurns,
+            directory: directory
+        )
+        #expect(propGeneric.matchedCount == 0)
     }
 }

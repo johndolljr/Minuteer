@@ -466,6 +466,88 @@ public struct AudioFingerprintEngine: Sendable {
         }
     }
 
+    /// Incrementally trains a speaker's acoustic voiceprint from their assigned turns in the audio file,
+    /// then scans all remaining generic/unassigned turns in the recording. Any turn whose voice matches
+    /// a known speaker in the directory with high confidence is automatically assigned.
+    @discardableResult
+    public static func trainAndPropagateSpeaker(
+        audioURL: URL,
+        speakerName: String,
+        turns: [TranscriptTurn],
+        directory: SpeakerDirectory = .shared,
+        threshold: Float = defaultMatchThreshold
+    ) async -> (updatedTurns: [TranscriptTurn], matchedCount: Int) {
+        guard FileManager.default.fileExists(atPath: audioURL.path), !turns.isEmpty else {
+            return (turns, 0)
+        }
+        let cleanName = speakerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanName.isEmpty, !cleanName.lowercased().hasPrefix("speaker") else {
+            return (turns, 0)
+        }
+
+        // 1. Extract audio and train/refine voiceprint for the newly designated speaker
+        let matchingTurns = turns.filter { $0.speaker.caseInsensitiveCompare(cleanName) == .orderedSame }
+        if !matchingTurns.isEmpty {
+            var timeRanges: [(start: TimeInterval, end: TimeInterval)] = []
+            for (i, turn) in matchingTurns.enumerated() {
+                guard let start = turn.timestampSeconds else { continue }
+                let nextStart: TimeInterval
+                if i + 1 < matchingTurns.count, let nSec = matchingTurns[i + 1].timestampSeconds, nSec > start {
+                    nextStart = min(start + 20.0, nSec)
+                } else {
+                    nextStart = start + 8.0
+                }
+                timeRanges.append((start: start, end: nextStart))
+            }
+            if let newPrint = try? extractVoiceprint(from: audioURL, timeRanges: timeRanges) {
+                directory.updateVoiceprint(forSpeakerNamed: cleanName, newVoiceprint: newPrint)
+            }
+        }
+
+        // 2. Scan remaining generic turns in the recording against the updated directory
+        var updatedTurns = turns
+        var matchedCount = 0
+        var genericClusterMapping: [String: String] = [:]
+
+        for i in 0..<updatedTurns.count {
+            let currentSpeaker = updatedTurns[i].speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+            let isGeneric = currentSpeaker.isEmpty || currentSpeaker.lowercased().hasPrefix("speaker")
+            guard isGeneric else { continue }
+
+            // If a previous turn in this cluster was already matched, apply it immediately
+            if let preMatched = genericClusterMapping[currentSpeaker] {
+                updatedTurns[i].speaker = preMatched
+                matchedCount += 1
+                continue
+            }
+
+            let startTime = updatedTurns[i].timestampSeconds ?? (Double(i) * 6.0)
+            let nextStart: TimeInterval? = (i + 1 < updatedTurns.count) ? updatedTurns[i + 1].timestampSeconds : nil
+            let endTime: TimeInterval
+            if let next = nextStart, next > startTime {
+                endTime = min(startTime + 25.0, next)
+            } else {
+                endTime = startTime + 6.0
+            }
+            let duration = max(0.6, endTime - startTime)
+            let timeRanges = [(start: startTime, end: startTime + duration)]
+
+            guard let turnPrint = try? extractVoiceprint(from: audioURL, timeRanges: timeRanges) else {
+                continue
+            }
+
+            if let (matched, _) = identifySpeaker(voiceprint: turnPrint, in: directory, threshold: threshold) {
+                updatedTurns[i].speaker = matched.name
+                matchedCount += 1
+                if !currentSpeaker.isEmpty {
+                    genericClusterMapping[currentSpeaker] = matched.name
+                }
+            }
+        }
+
+        return (updatedTurns, matchedCount)
+    }
+
     /// Asynchronously extracts and updates a speaker's voiceprint directly from their dedicated microphone or source stem
     public static func fingerprintSpeakerFromStem(
         stemURL: URL,

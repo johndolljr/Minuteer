@@ -909,6 +909,33 @@ struct DetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
 
+                    if let toast = model.speakerPropagationToast {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(Color.accentColor)
+                            Text(toast)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Button {
+                                withAnimation {
+                                    model.speakerPropagationToast = nil
+                                }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .transition(.opacity)
+                    }
+
                     if showRawTranscript {
                         Text(transcript)
                             .font(.system(.body, design: .monospaced))

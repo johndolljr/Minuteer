@@ -876,7 +876,7 @@ public final class AppModel {
             coordinator.speakerDirectory.addSpeaker(SpeakerProfile(name: cleanNew))
         }
 
-        // Train speaker's acoustic profile from the assigned turn and propagate across generic turns
+        // Train speaker's acoustic profile from the assigned turn and propagate across subsequent turns
         let spkDir = coordinator.speakerDirectory
         let fileURL = file.url
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -884,13 +884,14 @@ public final class AppModel {
                 audioURL: fileURL,
                 speakerName: cleanNew,
                 turns: turns,
-                directory: spkDir
+                directory: spkDir,
+                fromTurnIndex: turnIndex
             )
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
                 if matchedCount > 0 {
                     self.saveTurns(for: file, turns: propagatedTurns)
-                    self.showSpeakerToast("Trained \(cleanNew)'s voiceprint & auto-matched \(matchedCount) additional turn\(matchedCount == 1 ? "" : "s")!")
+                    self.showSpeakerToast("Trained \(cleanNew)'s voiceprint & auto-corrected \(matchedCount) subsequent turn\(matchedCount == 1 ? "" : "s")!")
                 } else {
                     self.showSpeakerToast("Learned & refined voiceprint for \(cleanNew).")
                 }
@@ -911,6 +912,33 @@ public final class AppModel {
         let turns = TranscriptTurn.parseTurns(from: currentTranscript)
         let merged = TranscriptTurn.mergeTurnWithPrevious(in: turns, turnIndex: turnIndex)
         saveTurns(for: file, turns: merged)
+
+        // Train and refine the merged speaker's voiceprint from the expanded speech audio
+        let mergedIndex = max(0, turnIndex - 1)
+        guard mergedIndex < merged.count else { return }
+        let speakerName = merged[mergedIndex].speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !speakerName.isEmpty, !speakerName.lowercased().hasPrefix("speaker") else { return }
+
+        let spkDir = coordinator.speakerDirectory
+        let fileURL = file.url
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let (propagatedTurns, matchedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                audioURL: fileURL,
+                speakerName: speakerName,
+                turns: merged,
+                directory: spkDir,
+                fromTurnIndex: mergedIndex
+            )
+            await MainActor.run { [weak self] in
+                guard let self = self else { return }
+                if matchedCount > 0 {
+                    self.saveTurns(for: file, turns: propagatedTurns)
+                    self.showSpeakerToast("Updated \(speakerName)'s voiceprint from merged audio & auto-corrected \(matchedCount) subsequent turn\(matchedCount == 1 ? "" : "s")!")
+                } else {
+                    self.showSpeakerToast("Refined \(speakerName)'s voiceprint from merged audio.")
+                }
+            }
+        }
     }
 
     public func splitTurn(
@@ -929,13 +957,43 @@ public final class AppModel {
         )
         saveTurns(for: file, turns: updated)
 
-        if let spk = newSpeaker, !spk.isEmpty {
-            AudioFingerprintEngine.fingerprintSpeakerInBackground(
-                audioURL: file.url,
-                speakerName: spk,
-                turns: updated,
-                directory: coordinator.speakerDirectory
-            )
+        let part1Speaker = (turnIndex < updated.count) ? updated[turnIndex].speaker : nil
+        let part2Speaker = newSpeaker ?? ((turnIndex + 1 < updated.count) ? updated[turnIndex + 1].speaker : nil)
+
+        let spkDir = coordinator.speakerDirectory
+        let fileURL = file.url
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            // Train Part 1 speaker voiceprint if named
+            if let p1 = part1Speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !p1.isEmpty, !p1.lowercased().hasPrefix("speaker") {
+                _ = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                    audioURL: fileURL,
+                    speakerName: p1,
+                    turns: updated,
+                    directory: spkDir,
+                    fromTurnIndex: nil
+                )
+            }
+
+            // Train Part 2 speaker voiceprint and propagate across subsequent turns
+            if let p2 = part2Speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !p2.isEmpty, !p2.lowercased().hasPrefix("speaker") {
+                let (propagatedTurns, matchedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                    audioURL: fileURL,
+                    speakerName: p2,
+                    turns: updated,
+                    directory: spkDir,
+                    fromTurnIndex: turnIndex + 1
+                )
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    if matchedCount > 0 {
+                        self.saveTurns(for: file, turns: propagatedTurns)
+                        self.showSpeakerToast("Trained \(p2)'s voiceprint from split & auto-corrected \(matchedCount) subsequent turn\(matchedCount == 1 ? "" : "s")!")
+                    } else {
+                        self.showSpeakerToast("Learned & refined voiceprint for \(p2).")
+                    }
+                }
+            }
         }
     }
 
@@ -959,14 +1017,43 @@ public final class AppModel {
         )
         saveTurns(for: file, turns: updated)
 
-        let targetSpeaker = newSpeaker ?? (turnIndex + 1 < updated.count ? updated[turnIndex + 1].speaker : nil)
-        if let spk = targetSpeaker, !spk.isEmpty {
-            AudioFingerprintEngine.fingerprintSpeakerInBackground(
-                audioURL: file.url,
-                speakerName: spk,
-                turns: updated,
-                directory: coordinator.speakerDirectory
-            )
+        let part1Speaker = (turnIndex < updated.count) ? updated[turnIndex].speaker : nil
+        let part2Speaker = newSpeaker ?? ((turnIndex + 1 < updated.count) ? updated[turnIndex + 1].speaker : nil)
+
+        let spkDir = coordinator.speakerDirectory
+        let fileURL = file.url
+
+        Task.detached(priority: .userInitiated) { [weak self] in
+            // Train Part 1 speaker voiceprint if named
+            if let p1 = part1Speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !p1.isEmpty, !p1.lowercased().hasPrefix("speaker") {
+                _ = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                    audioURL: fileURL,
+                    speakerName: p1,
+                    turns: updated,
+                    directory: spkDir,
+                    fromTurnIndex: nil
+                )
+            }
+
+            // Train Part 2 speaker voiceprint and propagate across subsequent turns
+            if let p2 = part2Speaker?.trimmingCharacters(in: .whitespacesAndNewlines), !p2.isEmpty, !p2.lowercased().hasPrefix("speaker") {
+                let (propagatedTurns, matchedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+                    audioURL: fileURL,
+                    speakerName: p2,
+                    turns: updated,
+                    directory: spkDir,
+                    fromTurnIndex: turnIndex + 1
+                )
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    if matchedCount > 0 {
+                        self.saveTurns(for: file, turns: propagatedTurns)
+                        self.showSpeakerToast("Trained \(p2)'s voiceprint from split & auto-corrected \(matchedCount) subsequent turn\(matchedCount == 1 ? "" : "s")!")
+                    } else {
+                        self.showSpeakerToast("Learned & refined voiceprint for \(p2).")
+                    }
+                }
+            }
         }
     }
 

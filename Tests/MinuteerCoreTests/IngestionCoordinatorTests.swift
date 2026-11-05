@@ -621,4 +621,30 @@ struct IngestionCoordinatorTests {
         #expect(coordinator.discoveredFiles.allSatisfy { $0.status == .discovered && $0.transcriptionProgress == 0.0 })
         #expect(coordinator.pipelineStatus == .idle)
     }
+
+    @Test("IngestionCoordinator configuration mutators and model settings")
+    @MainActor
+    func testCoordinatorConfigMutators() async {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let monitor = SDCardMonitor(targetVolumeName: "TEST_VOL")
+        let transcriber = MockTranscriptionEngine(mockTranscript: "Test")
+        let summarizer = AppleIntelligenceSummarizer { _ in "Test" }
+
+        let coordinator = IngestionCoordinator(
+            sdCardMonitor: monitor,
+            transcriptionEngine: transcriber,
+            summarizerEngine: summarizer,
+            markdownExporter: MarkdownExporter(destinationDirectory: tempDir),
+            historyLedger: HistoryLedger(fileURL: tempDir.appendingPathComponent("history.json")),
+            audioLibraryDirectory: tempDir
+        )
+
+        coordinator.updatePromptTemplate(.defaultMeeting)
+        coordinator.updateSessionType(.meeting)
+        coordinator.setTranscriptionModel("openai_whisper-tiny")
+        coordinator.setSummarizerEngine(summarizer)
+        #expect(coordinator.sessionType == .meeting)
+    }
 }

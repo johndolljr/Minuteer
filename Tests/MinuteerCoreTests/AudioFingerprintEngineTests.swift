@@ -381,5 +381,25 @@ struct AudioFingerprintEngineTests {
             directory: directory
         )
         #expect(propGeneric.matchedCount == 0)
+
+        // Test fromTurnIndex & correcting non-generic (mislabeled) subsequent turns
+        let mislabeledTurns = [
+            TranscriptTurn(id: 0, speaker: "Glenn", timestamp: "00:00", text: "Glenn speaking 300Hz."),
+            TranscriptTurn(id: 1, speaker: "OtherPerson", timestamp: "00:02", text: "2500Hz person."),
+            TranscriptTurn(id: 2, speaker: "WrongName", timestamp: "00:04", text: "Glenn at 300Hz mislabeled as WrongName.")
+        ]
+
+        let (correctedTurns, correctedCount) = await AudioFingerprintEngine.trainAndPropagateSpeaker(
+            audioURL: tempWAV,
+            speakerName: "Glenn",
+            turns: mislabeledTurns,
+            directory: directory,
+            threshold: 0.65,
+            fromTurnIndex: 1
+        )
+        #expect(correctedCount == 1)
+        #expect(correctedTurns[0].speaker == "Glenn")
+        #expect(correctedTurns[1].speaker == "OtherPerson")
+        #expect(correctedTurns[2].speaker == "Glenn") // Turn 2 auto-corrected from WrongName to Glenn!
     }
 }

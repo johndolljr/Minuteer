@@ -467,15 +467,17 @@ public struct AudioFingerprintEngine: Sendable {
     }
 
     /// Incrementally trains a speaker's acoustic voiceprint from their assigned turns in the audio file,
-    /// then scans all remaining generic/unassigned turns in the recording. Any turn whose voice matches
-    /// a known speaker in the directory with high confidence is automatically assigned.
+    /// then scans subsequent turns (starting from `fromTurnIndex` or beginning) in the recording.
+    /// Any turn matching the speaker's acoustic voiceprint (or another known speaker if generic) with high
+    /// confidence is automatically assigned/corrected, allowing rapid single-click correction of sequential runs.
     @discardableResult
     public static func trainAndPropagateSpeaker(
         audioURL: URL,
         speakerName: String,
         turns: [TranscriptTurn],
         directory: SpeakerDirectory = .shared,
-        threshold: Float = defaultMatchThreshold
+        threshold: Float = defaultMatchThreshold,
+        fromTurnIndex: Int? = nil
     ) async -> (updatedTurns: [TranscriptTurn], matchedCount: Int) {
         guard FileManager.default.fileExists(atPath: audioURL.path), !turns.isEmpty else {
             return (turns, 0)
@@ -504,22 +506,25 @@ public struct AudioFingerprintEngine: Sendable {
             }
         }
 
-        // 2. Scan remaining generic turns in the recording against the updated directory
+        guard let targetProfile = directory.getSpeaker(named: cleanName),
+              let targetPrint = targetProfile.voiceprint else {
+            return (turns, 0)
+        }
+
+        // 2. Scan subsequent turns (from fromTurnIndex onwards, or all turns if nil)
         var updatedTurns = turns
         var matchedCount = 0
-        var genericClusterMapping: [String: String] = [:]
+        let startIndex = (fromTurnIndex != nil) ? max(0, min(updatedTurns.count, fromTurnIndex!)) : 0
 
-        for i in 0..<updatedTurns.count {
+        for i in startIndex..<updatedTurns.count {
             let currentSpeaker = updatedTurns[i].speaker.trimmingCharacters(in: .whitespacesAndNewlines)
-            let isGeneric = currentSpeaker.isEmpty || currentSpeaker.lowercased().hasPrefix("speaker")
-            guard isGeneric else { continue }
 
-            // If a previous turn in this cluster was already matched, apply it immediately
-            if let preMatched = genericClusterMapping[currentSpeaker] {
-                updatedTurns[i].speaker = preMatched
-                matchedCount += 1
+            // If it's already this speaker, no correction needed
+            if currentSpeaker.caseInsensitiveCompare(cleanName) == .orderedSame {
                 continue
             }
+
+            let isGeneric = currentSpeaker.isEmpty || currentSpeaker.lowercased().hasPrefix("speaker")
 
             let startTime = updatedTurns[i].timestampSeconds ?? (Double(i) * 6.0)
             let nextStart: TimeInterval? = (i + 1 < updatedTurns.count) ? updatedTurns[i + 1].timestampSeconds : nil
@@ -536,11 +541,16 @@ public struct AudioFingerprintEngine: Sendable {
                 continue
             }
 
-            if let (matched, _) = identifySpeaker(voiceprint: turnPrint, in: directory, threshold: threshold) {
-                updatedTurns[i].speaker = matched.name
+            // Check match against the freshly trained speaker
+            let score = similarity(turnPrint, targetPrint)
+            if score >= threshold {
+                updatedTurns[i].speaker = cleanName
                 matchedCount += 1
-                if !currentSpeaker.isEmpty {
-                    genericClusterMapping[currentSpeaker] = matched.name
+            } else if isGeneric {
+                // If it was a generic speaker and didn't match target, see if it matches another known speaker
+                if let (matched, _) = identifySpeaker(voiceprint: turnPrint, in: directory, threshold: threshold) {
+                    updatedTurns[i].speaker = matched.name
+                    matchedCount += 1
                 }
             }
         }
